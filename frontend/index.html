@@ -1,112 +1,288 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Legal Text Summarizer</title>
-  <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Legal Document Summarizer - AI-Powered Legal Analysis</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
-  <!-- Added professional header with legal theme -->
-  <header class="header">
-    <div class="header-content">
+  <!-- NAVIGATION HEADER -->
+  <header class="navbar">
+    <div class="nav-container">
       <div class="logo">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <polyline points="10,9 9,9 8,9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <h1>Legal Text Summarizer</h1>
+        <span class="logo-icon">⚖️</span>
+        <span class="logo-text">LegalSummarizer</span>
       </div>
-      <p class="subtitle">AI-Powered Legal Document Analysis & Summarization</p>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#upload">Summarize</a>
+      </nav>
     </div>
   </header>
 
-  <main class="main-content">
-    <div class="controls-card">
-      <h2>Configuration</h2>
-      <div class="controls">
-        <div class="form-group">
-          <label for="dataset">Dataset:</label>
-          <select id="dataset" class="select-input">
-            <option value="ILC">ILC (Indian Legal Cases)</option>
-            <option value="IN-ABS">IN-ABS (Indian Abstractive summary)</option>
-          </select>
-        </div>
+  <!-- HERO SECTION -->
+  <section class="hero">
+    <div class="hero-content">
+      <h1 class="hero-title">Legal Document Summarization</h1>
+      <p class="hero-subtitle">
+        Powered by AI | Built for Indian Legal Judgments
+      </p>
+      <p class="hero-description">
+        Intelligently summarize complex legal documents using advanced LegalBERT extraction and T5 abstractive models.
+      </p>
+    </div>
+    <div class="hero-background"></div>
+  </section>
 
-        <!-- Updated number of entries to 1-5 options only -->
-        <div class="form-group">
-          <label for="numEntries">Number of Entries:</label>
-          <select id="numEntries" class="select-input">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-            <option value="5">5</option>
-          </select>
-        </div>
+  <!-- MAIN CONTAINER -->
+  <main class="container">
 
-        <div class="form-group" style="align-self: end;">
-          <label for="entryId">Specific Entry ID (optional):</label>
-          <input type="number" id="entryId" class="text-input" min="1" placeholder="Enter specific entry ID">
-        </div>
-        <div class="form-group" style="grid-column: 1 / -1; margin-top: -1rem;">
-          <small class="help-text">If specified, number of entries will be ignored</small>
-        </div>
+    <!-- UPLOAD SECTION -->
+    <section id="upload" class="upload-section">
+      <div class="section-header">
+        <h2>Get Started</h2>
+        <p>Upload a PDF or select from our legal datasets</p>
+      </div>
 
-        <div class="form-group">
-          <label for="fileInput">Upload JSON (optional):</label>
-          <input type="file" id="fileInput" class="file-input" accept=".json">
-        </div>
+      <!-- MODE TOGGLE -->
+      <div class="mode-toggle">
+        <label class="toggle-label">
+          <input type="radio" name="mode" value="dataset" checked />
+          <span class="toggle-text">Use Dataset</span>
+        </label>
+        <label class="toggle-label">
+          <input type="radio" name="mode" value="upload" />
+          <span class="toggle-text">Upload Document</span>
+        </label>
+      </div>
 
-        <button id="runBtn" class="run-button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <polygon points="5,3 19,12 5,21" fill="currentColor"/>
-          </svg>
-          Run Pipeline
-        </button>
+      <!-- ERROR MESSAGE -->
+      <div id="error"></div>
+
+      <!-- DATASET MODE -->
+      <div id="datasetSection" class="mode-content active">
+        <div class="dataset-container">
+          <div class="dataset-selector">
+            <label class="input-label">Select Dataset:</label>
+            <div class="dataset-buttons">
+              <button type="button" class="dataset-btn active" data-dataset="ILC">
+                <span class="dataset-icon">📋</span>
+                <span>ILC Dataset</span>
+                <span class="dataset-desc">Indian Legal Cases</span>
+              </button>
+              <button type="button" class="dataset-btn" data-dataset="IN-ABS">
+                <span class="dataset-icon">📑</span>
+                <span>IN-ABS Dataset</span>
+                <span class="dataset-desc">Indian Abstractive Summaries</span>
+              </button>
+            </div>
+            <input type="hidden" id="dataset" value="ILC" />
+          </div>
+
+          <div class="entries-selector">
+            <label class="input-label">Number of Documents:</label>
+            <select id="numEntries" class="input-select">
+              <option value="1">1 Document</option>
+              <option value="2">2 Documents</option>
+              <option value="3">3 Documents</option>
+              <option value="5">5 Documents</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- UPLOAD MODE -->
+      <div id="uploadSection" class="mode-content">
+        <div class="dataset-container">
+          <div class="upload-area">
+            <div class="upload-placeholder">
+              <svg class="upload-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              <p class="upload-text">Drag & drop your PDF here</p>
+              <p class="upload-subtext">or click to browse</p>
+            </div>
+            <input
+              type="file"
+              id="uploadFile"
+              class="file-input"
+              accept=".pdf,.docx,.odt,.txt"
+            />
+          </div>
+          <div class="file-info" id="fileInfo" style="display: none;">
+            <span class="file-name" id="fileName"></span>
+            <button type="button" class="file-remove" id="fileRemove">✕</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- RUN BUTTON -->
+      <button type="button" id="runBtn" class="summarize-btn">Summarize Document</button>
+
+    </section>
+
+    <!-- PROGRESS SECTION -->
+    <div class="progress-section" id="progressSection">
+      <h3 class="section-header" style="margin-bottom: 32px;">
+        <span style="font-size: 1.5rem; font-weight: 600; color: var(--neutral-900);">Processing Your Document</span>
+      </h3>
+
+      <div class="progress-item">
+        <div class="progress-label">
+          <span>Text Cleaning & Preprocessing</span>
+          <span class="progress-status" id="status1">Pending</span>
+        </div>
+        <div class="bar">
+          <div id="cleaningBar"></div>
+        </div>
+      </div>
+
+      <div class="progress-item">
+        <div class="progress-label">
+          <span>LegalBERT Extractive Summarization</span>
+          <span class="progress-status" id="status2">Pending</span>
+        </div>
+        <div class="bar">
+          <div id="bertBar"></div>
+        </div>
+      </div>
+
+      <div class="progress-item">
+        <div class="progress-label">
+          <span>T5 Abstractive Refinement</span>
+          <span class="progress-status" id="status3">Pending</span>
+        </div>
+        <div class="bar">
+          <div id="t5Bar"></div>
+        </div>
       </div>
     </div>
 
-    <div class="progress-card">
-      <h2>Pipeline Progress</h2>
-      <div class="progress-container">
-        <div class="progress-item">
-          <label>Data Cleaning</label>
-          <div class="progress-bar"><div class="progress-fill" id="fillCleaning"></div></div>
-        </div>
-        <div class="progress-item">
-          <label>Text Chunking</label>
-          <div class="progress-bar"><div class="progress-fill" id="fillChunking"></div></div>
-        </div>
-        <div class="progress-item">
-          <label>Summarization</label>
-          <div class="progress-bar"><div class="progress-fill" id="fillSummarization"></div></div>
-        </div>
-        <div class="progress-item">
-          <label>Evaluation</label>
-          <div class="progress-bar"><div class="progress-fill" id="fillEvaluation"></div></div>
-        </div>
-      </div>
+    <!-- RESULT SECTION -->
+    <div id="resultCard">
+      <h2 class="result-title">Summary Generated</h2>
+      <pre id="summaryText"></pre>
     </div>
 
-    <div class="error" id="error" style="display:none;"></div>
-
-    <!-- RESULTS SECTION with ROUGE -->
-    <div class="results-card" id="results" style="display:none;">
-      <h2>Results</h2>
-      <div id="avgRouge" class="avg-rouge">
-        <!-- Average ROUGE scores will be injected here -->
-      </div>
-      <div id="entriesContainer" class="entries-container">
-        <!-- Each entry’s summaries + ROUGE will be shown here -->
-      </div>
-    </div>
   </main>
 
+  <!-- FEATURES SECTION -->
+  <section id="features" class="features-section">
+    <div class="container">
+      <div class="section-header">
+        <h2>Why Choose Our Summarizer?</h2>
+        <p>State-of-the-art abstractive summarization designed specifically for legal documents</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">📄</div>
+          <h3 class="feature-title">Two-Stage Pipeline</h3>
+          <p class="feature-description">Chunk-level + global refinement for handling long legal documents</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">⚡</div>
+          <h3 class="feature-title">LegalBERT Extraction</h3>
+          <p class="feature-description">Supervised extractive model identifies summary-worthy sentences</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">📊</div>
+          <h3 class="feature-title">Superior Results</h3>
+          <p class="feature-description">ROUGE-1 ≈ 47.3% — outperforming prior benchmarks</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">⚙️</div>
+          <h3 class="feature-title">QLoRA Optimization</h3>
+          <p class="feature-description">Memory-efficient T5 fine-tuning on low-resource GPUs</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">📚</div>
+          <h3 class="feature-title">Indian Legal Focus</h3>
+          <p class="feature-description">Trained on ILC & IN-ABS datasets for Indian judgments</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🔧</div>
+          <h3 class="feature-title">Modular & Scalable</h3>
+          <p class="feature-description">Reproducible pipeline designed for future legal NLP research</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA SECTION -->
+  <section class="cta-section container">
+    <h2>Ready to Summarize?</h2>
+    <p>Start analyzing legal documents with AI-powered summarization</p>
+  </section>
+
+  <!-- SCRIPTS -->
   <script src="script.js"></script>
+
+  <!-- DATASET BUTTON INTERACTIVITY -->
+  <script>
+    // Dataset button selection
+    document.querySelectorAll('.dataset-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        document.querySelectorAll('.dataset-btn').forEach(b => b.classList.remove('active'))
+        btn.classList.add('active')
+        document.getElementById('dataset').value = btn.dataset.dataset
+      })
+    })
+
+    // File upload handling
+    const uploadArea = document.querySelector('.upload-area')
+    const uploadFile = document.getElementById('uploadFile')
+    const fileInfo = document.getElementById('fileInfo')
+    const fileName = document.getElementById('fileName')
+    const fileRemove = document.getElementById('fileRemove')
+
+    if (uploadArea) {
+      uploadArea.addEventListener('click', () => uploadFile.click())
+
+      uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault()
+        uploadArea.classList.add('drag-over')
+      })
+
+      uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('drag-over')
+      })
+
+      uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault()
+        uploadArea.classList.remove('drag-over')
+        if (e.dataTransfer.files.length) {
+          uploadFile.files = e.dataTransfer.files
+          updateFileInfo()
+        }
+      })
+    }
+
+    uploadFile.addEventListener('change', updateFileInfo)
+
+    function updateFileInfo() {
+      if (uploadFile.files.length) {
+        fileName.textContent = `✓ ${uploadFile.files[0].name}`
+        fileInfo.style.display = 'flex'
+        uploadArea.style.display = 'none'
+      }
+    }
+
+    fileRemove.addEventListener('click', () => {
+      uploadFile.value = ''
+      fileInfo.style.display = 'none'
+      uploadArea.style.display = 'block'
+    })
+  </script>
 </body>
 </html>
