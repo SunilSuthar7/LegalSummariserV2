@@ -132,6 +132,22 @@ async def run_pipeline(
     session_path = SESSIONS_DIR / session_id
     session_path.mkdir(parents=True, exist_ok=True)
 
+    # Save uploaded file synchronously so background thread doesn't read a closed file
+    uploaded_file_path = None
+    if mode == "upload":
+        if not file:
+            raise ValueError("File required for upload mode")
+        safe_name = Path(file.filename).name
+        try:
+            uploaded_file_path = session_path / safe_name
+            with open(uploaded_file_path, "wb") as out_f:
+                shutil.copyfileobj(file.file, out_f)
+            file.file.close()
+            logger.info(f"[{session_id}] Uploaded file saved: {uploaded_file_path}")
+        except Exception as e:
+            logger.error(f"[{session_id}] Failed to save uploaded file: {e}")
+            raise
+
     # Initialize session IMMEDIATELY before any processing
     PIPELINE_PROGRESS[session_id] = {
         "stages": [],
@@ -153,34 +169,25 @@ async def run_pipeline(
 
             # ================= UPLOAD MODE =================
             if mode == "upload":
-                if not file:
-                    raise ValueError("File required for upload mode")
+                # Use the file we already saved above
+                if not uploaded_file_path or not uploaded_file_path.exists():
+                    raise ValueError("Uploaded file not available on disk")
 
-                logger.info(f"[{session_id}] Processing uploaded file: {file.filename}")
-                
-                file_path = session_path / file.filename
-                with open(file_path, "wb") as f:
-                    shutil.copyfileobj(file.file, f)
-
-                logger.info(f"[{session_id}] File saved to {file_path}")
-
-                # Extract text from uploaded file
-                ext = file.filename.lower().split(".")[-1]
-                logger.info(f"[{session_id}] File extension: {ext}")
-                
+                logger.info(f"[{session_id}] Processing uploaded file: {uploaded_file_path.name}")
+                ext = uploaded_file_path.suffix.lstrip(".").lower()
                 try:
                     if ext == "pdf":
                         logger.info(f"[{session_id}] Extracting text from PDF...")
-                        text_data = extract_text_from_pdf(file_path)
+                        text_data = extract_text_from_pdf(uploaded_file_path)
                     elif ext == "docx":
                         logger.info(f"[{session_id}] Extracting text from DOCX...")
-                        text_data = extract_text_from_docx(file_path)
+                        text_data = extract_text_from_docx(uploaded_file_path)
                     elif ext == "odt":
                         logger.info(f"[{session_id}] Extracting text from ODT...")
-                        text_data = extract_text_from_odt(file_path)
+                        text_data = extract_text_from_odt(uploaded_file_path)
                     elif ext == "txt":
                         logger.info(f"[{session_id}] Extracting text from TXT...")
-                        text_data = extract_text_from_txt(file_path)
+                        text_data = extract_text_from_txt(uploaded_file_path)
                     else:
                         raise ValueError(f"Unsupported file type: .{ext}")
                     
@@ -235,29 +242,32 @@ async def run_pipeline(
             logger.info(f"[{session_id}] Starting pipeline with {len(raw_samples)} samples")
             save_json(session_path / "raw.json", raw_samples)
 
-            update("Cleaning")
+            update("Cleaning Started")
             logger.info(f"[{session_id}] Running cleaner script...")
             run_script(
                 SCRIPTS_DIR / "cleaner_generic.py",
                 ["--input", "raw.json", "--output", "cleaned.json"],
                 session_path
             )
+            update("Cleaning Completed")
 
-            update("LegalBERT Extractive")
+            update("LegalBERT Extractive Started")
             logger.info(f"[{session_id}] Running LegalBERT extractive script...")
             run_script(
                 SCRIPTS_DIR / "legalbert_extractive.py",
                 ["--input", "cleaned.json", "--output", "legalbert.json"],
                 session_path
             )
+            update("LegalBERT Extractive Completed")
 
-            update("T5 Abstractive")
+            update("T5 Abstractive Started")
             logger.info(f"[{session_id}] Running T5 abstractive script...")
             run_script(
                 SCRIPTS_DIR / "t5_abstractive.py",
                 ["--input", "legalbert.json", "--output", "final.json"],
                 session_path
             )
+            update("T5 Abstractive Completed")
 
             logger.info(f"[{session_id}] Loading results...")
             if session_id in PIPELINE_PROGRESS:
