@@ -3,13 +3,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import json
 import sys
-from typing import Optional
-import time
 import uuid
 from threading import Thread
 import shutil
 import subprocess
-from fastapi.staticfiles import StaticFiles
+from typing import Optional
+import logging
+
+# =============== DATASET + EXTRACTION ===============
+from datasets import load_dataset
+import pdfplumber
+import pytesseract
+import docx
+from odf.opendocument import load
+from odf import text, teletype
+# ===================================================
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="LegalSummarizer Backend")
 
@@ -22,168 +33,257 @@ app.add_middleware(
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
 SCRIPTS_DIR = BASE_DIR / "backend" / "scripts"
 SESSIONS_DIR = BASE_DIR / "backend" / "sessions"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-app.mount("/sessions", StaticFiles(directory=SESSIONS_DIR), name="sessions")
-
-# Track pipelines by session_id
 PIPELINE_PROGRESS = {}
 
-@app.get("/")
-def root():
-    return {"message": "Backend is running! Use POST /run_pipeline"}
+# ================= HELPERS =================
 
-def safe_load_json(path: Path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
+def run_script(script: Path, args: list, cwd: Path):
+    cmd = [sys.executable, str(script)] + args
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr)
 
 def save_json(path: Path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-def run_script(script_path: Path, args: list = [], verbose=False, stage_name=None):
-    cmd = [sys.executable, str(script_path)] + args
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Script failed: {' '.join(cmd)}\nExit code: {result.returncode}\n\n"
-            f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
-        )
-    return result.stdout
+def load_json(path: Path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+# ================= EXTRACTION =================
+
+def extract_text_from_pdf(path: Path) -> str:
+    """Extract text from PDF with fallback to OCR"""
+    text_out = ""
+    try:
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t and t.strip():
+                    text_out += t + "\n"
+                else:
+                    try:
+                        image = page.to_image(resolution=300).original
+                        text_out += pytesseract.image_to_string(image) + "\n"
+                    except Exception as e:
+                        logger.warning(f"OCR failed for page: {e}")
+                        continue
+    except Exception as e:
+        logger.error(f"PDF extraction failed: {e}")
+        raise ValueError(f"Failed to extract text from PDF: {str(e)}")
+    
+    if not text_out.strip():
+        raise ValueError("No text could be extracted from PDF")
+    return text_out.strip()
+
+def extract_text_from_docx(path: Path) -> str:
+    """Extract text from DOCX"""
+    try:
+        doc = docx.Document(path)
+        text_data = "\n".join(p.text for p in doc.paragraphs).strip()
+        if not text_data:
+            raise ValueError("DOCX file is empty")
+        return text_data
+    except Exception as e:
+        raise ValueError(f"Failed to extract text from DOCX: {str(e)}")
+
+def extract_text_from_odt(path: Path) -> str:
+    """Extract text from ODT"""
+    try:
+        doc = load(str(path))
+        paras = doc.getElementsByType(text.P)
+        text_data = "\n".join(teletype.extractText(p) for p in paras).strip()
+        if not text_data:
+            raise ValueError("ODT file is empty")
+        return text_data
+    except Exception as e:
+        raise ValueError(f"Failed to extract text from ODT: {str(e)}")
+
+def extract_text_from_txt(path: Path) -> str:
+    """Extract text from TXT"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text_data = f.read().strip()
+        if not text_data:
+            raise ValueError("TXT file is empty")
+        return text_data
+    except Exception as e:
+        raise ValueError(f"Failed to extract text from TXT: {str(e)}")
+
+# ================= ROUTES =================
+
+@app.get("/")
+def root():
+    return {"message": "Backend running", "sessions": len(PIPELINE_PROGRESS)}
 
 @app.post("/run_pipeline")
-async def run_pipeline(dataset: str = Form(...), n: int = Form(...), entry_id: Optional[int] = Form(None)):
-    dataset = dataset.strip().upper()
-    if dataset not in ["ILC", "IN-ABS"]:
-        raise HTTPException(status_code=422, detail="Dataset must be 'ILC' or 'IN-ABS'")
-    if n <= 0 or n > 1000:
-        raise HTTPException(status_code=422, detail="n must be between 1 and 1000")
-
+async def run_pipeline(
+    mode: str = Form(...),
+    dataset: Optional[str] = Form(None),
+    n: Optional[int] = Form(None),
+    file: UploadFile = File(None),
+):
     session_id = str(uuid.uuid4())
+    session_path = SESSIONS_DIR / session_id
+    session_path.mkdir(parents=True, exist_ok=True)
+
+    # Initialize session IMMEDIATELY before any processing
     PIPELINE_PROGRESS[session_id] = {
         "stages": [],
         "completed": False,
         "results": None,
-        "error": None,
-        "entry_id": entry_id,
+        "error": None
     }
+    
+    logger.info(f"[{session_id}] Session initialized - Mode: {mode}")
+
+    def update(stage):
+        if session_id in PIPELINE_PROGRESS:
+            PIPELINE_PROGRESS[session_id]["stages"].append(stage)
+            logger.info(f"[{session_id}] Stage: {stage}")
 
     def pipeline_task():
         try:
-            outputs = {}
-            stages = []
+            raw_samples = []
 
-            def update_stage(name, status):
-                stage_entry = {"stage": name, "status": status}
-                stages.append(stage_entry)
-                PIPELINE_PROGRESS[session_id]["stages"] = stages.copy()
+            # ================= UPLOAD MODE =================
+            if mode == "upload":
+                if not file:
+                    raise ValueError("File required for upload mode")
 
-            # Prepare session folder
-            session_path = SESSIONS_DIR / session_id
-            session_path.mkdir(parents=True, exist_ok=True)
+                logger.info(f"[{session_id}] Processing uploaded file: {file.filename}")
+                
+                file_path = session_path / file.filename
+                with open(file_path, "wb") as f:
+                    shutil.copyfileobj(file.file, f)
 
-            # Step 1: Load cleaned/chunked data
-            stage_name = "Cleaning"
-            update_stage(stage_name, "completed")  # mark cleaning done
+                logger.info(f"[{session_id}] File saved to {file_path}")
 
-            if dataset == "ILC":
-                cleaned_path = DATA_DIR / "cleaned_ilc.json"
-                chunked_path = DATA_DIR / "chunked_ilc.json"
-                cleaned_data = safe_load_json(cleaned_path) or []
-                chunked_data = safe_load_json(chunked_path) or []
-            else:
-                cleaned_path = DATA_DIR / "cleaned_inabs.json"
-                chunked_path = DATA_DIR / "chunked_inabs.json"
-                cleaned_data = safe_load_json(cleaned_path) or []
-                chunked_data = safe_load_json(chunked_path) or []
+                # Extract text from uploaded file
+                ext = file.filename.lower().split(".")[-1]
+                logger.info(f"[{session_id}] File extension: {ext}")
+                
+                try:
+                    if ext == "pdf":
+                        logger.info(f"[{session_id}] Extracting text from PDF...")
+                        text_data = extract_text_from_pdf(file_path)
+                    elif ext == "docx":
+                        logger.info(f"[{session_id}] Extracting text from DOCX...")
+                        text_data = extract_text_from_docx(file_path)
+                    elif ext == "odt":
+                        logger.info(f"[{session_id}] Extracting text from ODT...")
+                        text_data = extract_text_from_odt(file_path)
+                    elif ext == "txt":
+                        logger.info(f"[{session_id}] Extracting text from TXT...")
+                        text_data = extract_text_from_txt(file_path)
+                    else:
+                        raise ValueError(f"Unsupported file type: .{ext}")
+                    
+                    logger.info(f"[{session_id}] Text extraction successful - Length: {len(text_data)} chars")
+                except Exception as e:
+                    logger.error(f"[{session_id}] Text extraction failed: {str(e)}")
+                    raise
 
-            update_stage("Chunking", "completed")
-
-            # Extract subset
-            if entry_id:
-                cleaned_subset = [d for d in cleaned_data if d.get("id") == entry_id]
-                chunked_subset = [d for d in chunked_data if d.get("id") == entry_id] if chunked_data else None
-            else:
-                cleaned_subset = cleaned_data[:n]
-                chunked_subset = chunked_data[:n] if chunked_data else None
-
-            # Save session copies
-            save_json(session_path / "cleaned.json", cleaned_subset)
-            if chunked_subset:
-                save_json(session_path / "chunked.json", chunked_subset)
-            outputs["cleaned"] = str(session_path / "cleaned.json")
-            if chunked_subset:
-                outputs["chunked"] = str(session_path / "chunked.json")
-            update_stage(stage_name, "completed")
-
-            # Step 2: Summarization
-            stage_name = "Summarization"
-            run_script(
-                SCRIPTS_DIR / "t5_summarizer.py",
-                [
-                    "--dataset", dataset,
-                    "--session_id", session_id,
-                    "--n", str(n)
-                ] + (["--ids", str(entry_id)] if entry_id else []),
-            )
-            outputs["summary"] = str(session_path / f"t5_{dataset.lower()}_final.json")
-            update_stage(stage_name, "completed")
-
-            # Step 3: Evaluation
-            stage_name = "Evaluation"
-            run_script(
-                SCRIPTS_DIR / "t5_evaluator.py",
-                [
-                    "--dataset", dataset,
-                    "--session_id", session_id,
-                    "--n", str(n)
-                ] + (["--ids", str(entry_id)] if entry_id else []),
-            )
-            outputs["evaluation"] = str(session_path / f"rouge_{dataset.lower()}.json")
-            update_stage(stage_name, "completed")
-
-            # Prepare final entries for frontend
-            summary_json = safe_load_json(session_path / f"t5_{dataset.lower()}_final.json") or []
-            eval_json = safe_load_json(session_path / f"rouge_{dataset.lower()}.json") or {}
-            per_entry_rouge = eval_json.get("per_entry", [])
-
-            entries = []
-            for i, s in enumerate(summary_json):
-                c = cleaned_subset[i] if i < len(cleaned_subset) else {}
-                rouge_entry = per_entry_rouge[i] if i < len(per_entry_rouge) else None
-                entries.append({
-                    "original_text": c.get("input_text"),
-                    "reference_summary": c.get("summary_text"),
-                    "generated_summary": s.get("refined_summary_improved"),
-                    "rouge_scores": rouge_entry,
+                raw_samples.append({
+                    "id": session_id,
+                    "input_text": text_data
                 })
 
-            avg_rouge = {k: eval_json.get(k) for k in ["rouge1", "rouge2", "rougeL"]}
+            # ================= DATASET MODE =================
+            elif mode == "dataset":
+                if not dataset or not n:
+                    raise ValueError("Dataset name and n required")
 
-            PIPELINE_PROGRESS[session_id]["results"] = {
-                "avg_scores": avg_rouge,
-                "entries": entries,
-                "outputs": outputs,
-            }
-            PIPELINE_PROGRESS[session_id]["completed"] = True
+                update("Dataset Loading")
+                logger.info(f"[{session_id}] Loading {dataset} dataset with {n} samples")
+
+                try:
+                    if dataset == "ILC":
+                        logger.info(f"[{session_id}] Loading ILC dataset...")
+                        ds = load_dataset("d0r1h/ILC", split="train[:{}]".format(n))
+                        for i, r in enumerate(ds):
+                            raw_samples.append({
+                                "id": f"ilc_{i}",
+                                "input_text": r.get("Case", "")
+                            })
+                        logger.info(f"[{session_id}] ILC dataset loaded - {len(raw_samples)} samples")
+
+                    elif dataset == "IN-ABS":
+                        logger.info(f"[{session_id}] Loading IN-ABS dataset...")
+                        ds = load_dataset("percins/IN-ABS", split="train[:{}]".format(n))
+                        for i, r in enumerate(ds):
+                            raw_samples.append({
+                                "id": f"inabs_{i}",
+                                "input_text": r.get("text", "")
+                            })
+                        logger.info(f"[{session_id}] IN-ABS dataset loaded - {len(raw_samples)} samples")
+
+                    else:
+                        raise ValueError("Unsupported dataset")
+                except Exception as e:
+                    raise ValueError(f"Failed to load dataset: {str(e)}")
+
+            else:
+                raise ValueError("Invalid mode")
+
+            # ================= COMMON PIPELINE =================
+            logger.info(f"[{session_id}] Starting pipeline with {len(raw_samples)} samples")
+            save_json(session_path / "raw.json", raw_samples)
+
+            update("Cleaning")
+            logger.info(f"[{session_id}] Running cleaner script...")
+            run_script(
+                SCRIPTS_DIR / "cleaner_generic.py",
+                ["--input", "raw.json", "--output", "cleaned.json"],
+                session_path
+            )
+
+            update("LegalBERT Extractive")
+            logger.info(f"[{session_id}] Running LegalBERT extractive script...")
+            run_script(
+                SCRIPTS_DIR / "legalbert_extractive.py",
+                ["--input", "cleaned.json", "--output", "legalbert.json"],
+                session_path
+            )
+
+            update("T5 Abstractive")
+            logger.info(f"[{session_id}] Running T5 abstractive script...")
+            run_script(
+                SCRIPTS_DIR / "t5_abstractive.py",
+                ["--input", "legalbert.json", "--output", "final.json"],
+                session_path
+            )
+
+            logger.info(f"[{session_id}] Loading results...")
+            if session_id in PIPELINE_PROGRESS:
+                PIPELINE_PROGRESS[session_id]["results"] = load_json(
+                    session_path / "final.json"
+                )
+                PIPELINE_PROGRESS[session_id]["completed"] = True
+                logger.info(f"[{session_id}] Pipeline completed successfully")
 
         except Exception as e:
-            PIPELINE_PROGRESS[session_id]["error"] = str(e)
-            PIPELINE_PROGRESS[session_id]["completed"] = True
+            logger.error(f"[{session_id}] Pipeline error: {str(e)}")
+            if session_id in PIPELINE_PROGRESS:
+                PIPELINE_PROGRESS[session_id]["error"] = str(e)
+                PIPELINE_PROGRESS[session_id]["completed"] = True
 
-    Thread(target=pipeline_task).start()
+    # Start pipeline in background thread
+    Thread(target=pipeline_task, daemon=True).start()
+    
+    logger.info(f"[{session_id}] Returning session_id to client")
     return {"status": "started", "session_id": session_id}
 
 @app.get("/pipeline_status")
 def pipeline_status(session_id: str):
-    if session_id in PIPELINE_PROGRESS:
-        return PIPELINE_PROGRESS[session_id]
-    else:
-        raise HTTPException(status_code=404, detail="Session not found")
+    if session_id not in PIPELINE_PROGRESS:
+        logger.warning(f"Session not found: {session_id}")
+        logger.info(f"Available sessions: {list(PIPELINE_PROGRESS.keys())}")
+        raise HTTPException(404, f"Session '{session_id}' not found")
+    
+    return PIPELINE_PROGRESS[session_id]
