@@ -20,7 +20,7 @@ LegalSummarizer is a web application for summarizing Indian legal documents usin
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/SunilSuthar7/LegalSummarizer.git
+git clone https://github.com/SunilSuthar7/LegalSummarizerV2.git
 cd LegalSummarizer
 ````
 

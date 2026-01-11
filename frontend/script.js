@@ -48,6 +48,10 @@ let stageProgress = {
   "T5 Abstractive": 0
 }
 
+/* ================= EVENT PROCESSING STATE ================= */
+let processedEvents = new Set()       // ensure we process each backend event once
+let pendingStarts = new Set()         // started events waiting for previous stage to finish
+
 /* ================= HELPERS ================= */
 function setBar(bar, percent, statusEl = null) {
   if (bar) {
@@ -67,8 +71,20 @@ function setBar(bar, percent, statusEl = null) {
   }
 }
 
+// New helper: mark status as In Progress immediately when animation begins
+function setStatusInProgress(statusEl) {
+  if (!statusEl) return
+  const text = (statusEl.textContent || "").trim()
+  if (text === "In Progress" || text === "✓ Complete") return
+  statusEl.textContent = "In Progress"
+  statusEl.style.color = "var(--warning)"
+}
+
 function smoothAnimateBar(bar, targetPercent, statusEl = null, callback = null) {
   if (!bar) return
+  
+  // Ensure UI shows "In Progress" as soon as movement starts
+  if (statusEl) setStatusInProgress(statusEl)
   
   const currentWidth = parseFloat(bar.style.width) || 0
   
@@ -115,6 +131,68 @@ function showProgress() {
 
 function hideProgress() {
   progressSection.classList.remove("active")
+}
+
+function processEvent(ev) {
+  // ev examples: "Cleaning Started", "Cleaning Completed"
+  if (!ev || typeof ev !== 'string') return
+  const isStarted = ev.endsWith(" Started")
+  const isCompleted = ev.endsWith(" Completed")
+  const base = ev.replace(/ Started| Completed$/, "")
+  const config = stageConfig[base]
+  if (!config) return
+
+  // Helper to check previous stage completion
+  const previousStages = Object.keys(stageConfig).filter(s => stageConfig[s].order < config.order)
+  const allPreviousComplete = previousStages.every(s => completedStages.has(s))
+
+  if (isStarted) {
+    // If previous stages aren't complete, queue this start
+    if (!allPreviousComplete) {
+      pendingStarts.add(ev)
+      console.log(`Queued start for ${base} (waiting on previous stages)`)
+      return
+    }
+
+    // Start in-progress animation (T5 uses 90% cap)
+    const target = base === "T5 Abstractive" ? 90 : 85
+    animatingStages.add(base)
+    console.log(`→ Stage IN PROGRESS: ${base} (target ${target}%)`)
+    smoothAnimateBar(config.bar, target, config.status)
+  } else if (isCompleted) {
+    // Mark done
+    animatingStages.delete(base)
+    completedStages.add(base)
+    console.log(`✓ Stage COMPLETED: ${base}`)
+    // Set bar to full and status to complete
+    setBar(config.bar, 100, config.status)
+
+    // After completion, try to start any pending starts that are now unblocked
+    checkPendingStarts()
+  }
+}
+
+function checkPendingStarts() {
+  if (!pendingStarts.size) return
+  // Try to start any pending events whose previous stages are now complete
+  for (const ev of Array.from(pendingStarts)) {
+    const base = ev.replace(/ Started$/, "")
+    const config = stageConfig[base]
+    if (!config) {
+      pendingStarts.delete(ev)
+      continue
+    }
+    const previousStages = Object.keys(stageConfig).filter(s => stageConfig[s].order < config.order)
+    const allPreviousComplete = previousStages.every(s => completedStages.has(s))
+    if (allPreviousComplete) {
+      pendingStarts.delete(ev)
+      // Process the start event now (without re-adding processedEvents)
+      const target = base === "T5 Abstractive" ? 90 : 85
+      animatingStages.add(base)
+      console.log(`→ Pending start now IN PROGRESS: ${base} (target ${target}%)`)
+      smoothAnimateBar(config.bar, target, config.status)
+    }
+  }
 }
 
 /* ================= MODE TOGGLE ================= */
@@ -342,42 +420,12 @@ async function pollPipeline(sessionId) {
     }
 
     const stages = Array.isArray(status.stages) ? status.stages : []
-    
-    console.log(`[Poll ${pollCount}] Completed stages:`, stages, "Pipeline completed:", status.completed)
-
-    // Process each stage that just completed
-    stages.forEach(stageName => {
-      if (!completedStages.has(stageName)) {
-        console.log(`✓ Stage JUST COMPLETED: ${stageName}`)
-        completedStages.add(stageName)
-        animatingStages.delete(stageName)
-        
-        const config = stageConfig[stageName]
-        if (config) {
-          // Animate to 100%
-          smoothAnimateBar(config.bar, 100, config.status)
-        }
-      }
-    })
-
-    // For stages NOT completed yet, only animate if:
-    // 1. Previous stage is already complete
-    // 2. Current stage is in the stages list
-    Object.keys(stageConfig).forEach(stageName => {
-      const config = stageConfig[stageName]
-      const isCompleted = completedStages.has(stageName)
-      const isStarted = stages.includes(stageName)
-      const previousStages = Object.keys(stageConfig)
-        .filter(s => stageConfig[s].order < config.order)
-      const allPreviousComplete = previousStages.every(s => completedStages.has(s))
-      
-      // Only animate if: not completed, has started, previous stage complete, and not already animating
-      if (!isCompleted && isStarted && allPreviousComplete && !animatingStages.has(stageName) && !status.completed) {
-        console.log(`→ Stage IN PROGRESS: ${stageName}`)
-        animatingStages.add(stageName)
-        
-        // Animate to 85% while in progress
-        smoothAnimateBar(config.bar, 85, config.status)
+    // 'stages' is now a list of event messages (e.g. "Cleaning Started", "Cleaning Completed")
+    // Process each new event only once
+    stages.forEach(ev => {
+      if (!processedEvents.has(ev)) {
+        processedEvents.add(ev)
+        processEvent(ev)
       }
     })
 
@@ -391,7 +439,7 @@ async function pollPipeline(sessionId) {
         return
       }
 
-      // Ensure ALL stages show 100% complete
+      // Ensure ALL stages show 100% complete (in case some complete events weren't seen)
       console.log("✓ Pipeline COMPLETED - marking all stages as complete")
       Object.keys(stageConfig).forEach(stageName => {
         const config = stageConfig[stageName]
