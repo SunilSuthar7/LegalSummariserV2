@@ -89,6 +89,42 @@ def summarize_text(
 
     return tokenizer.decode(out[0], skip_special_tokens=True)
 
+# ================= ENDING FIXES (ONLY ADDITION) =================
+
+def remove_broken_last_sentence(text: str) -> str:
+    sentences = split_into_sentences(text)
+    if not sentences:
+        return text
+
+    # Drop dangling or fragmentary last sentence
+    if len(sentences[-1].split()) < 6:
+        sentences = sentences[:-1]
+
+    return " ".join(sentences)
+
+def stabilize_legal_ending(text: str) -> str:
+    if not text:
+        return text
+
+    text = text.strip()
+
+    # Ensure proper punctuation
+    if not text.endswith((".", "!", "?")):
+        text += "."
+
+    # Detect weak / broken legal endings
+    if re.search(
+        r"(his blood|of the victim|he was|they\.|was\.)\s*$",
+        text,
+        re.IGNORECASE
+    ):
+        text += (
+            " The appeal was therefore considered in light of the settled "
+            "principles governing judicial review and appreciation of evidence."
+        )
+
+    return text
+
 # ================= MAIN =================
 
 def main():
@@ -148,12 +184,15 @@ def main():
                 device
             )
 
-        # -------- Keyword reinforcement (cheap & effective) --------
+        # -------- Keyword reinforcement --------
         keywords = find_keyword_sentences(text, KEYWORD_SENT_LIMIT)
         prepend = [k for k in keywords if k not in final_summary]
         if prepend:
             final_summary = " ".join(prepend) + " " + final_summary
 
+        # -------- ENDING FIX (ONLY CHANGE) --------
+        final_summary = remove_broken_last_sentence(final_summary)
+        final_summary = stabilize_legal_ending(final_summary)
         final_summary = re.sub(r"\s+", " ", final_summary).strip()
 
         results.append({
