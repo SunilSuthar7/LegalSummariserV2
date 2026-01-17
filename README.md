@@ -1,40 +1,97 @@
 ﻿
 # LegalSummarizer
 
-LegalSummarizer is a web application for summarizing Indian legal documents using **T5-based abstractive summarization**. It supports **ILC (Indian Legal Cases)** and **IN-ABS (Indian Abstractive Summaries)** datasets and provides ROUGE evaluation for the generated summaries.
+**LegalSummarizer** is an end-to-end web-based AI system for summarizing **Indian legal documents** using a **hybrid extractive–abstractive approach**.  
+The system combines **LegalBERT-based extractive summarization** with **QLoRA fine-tuned T5 abstractive summarization**, enabling high-quality summaries of long legal judgments under **low-resource constraints**.
+
+It supports both benchmark datasets (**ILC** and **IN-ABS**) as well as **user-uploaded legal documents (PDF/DOCX)** and provides **ROUGE-based evaluation**.
+
+---
+
+## Project Highlights
+
+- Hybrid **LegalBERT + T5** summarization pipeline  
+- **QLoRA (4-bit + LoRA)** fine-tuning for memory-efficient training  
+- Handles **long legal documents** using hierarchical (two-stage) summarization  
+- Dataset-based and **user-uploaded document** summarization  
+- End-to-end **FastAPI backend + web frontend**  
+- Achieves **ROUGE-1 ≈ 47.3**, outperforming prior reported results (~46)
 
 ---
 
 ## Features
 
-- Clean and preprocess legal documents.  
-- Generate abstractive summaries using T5.  
-- Evaluate summaries using ROUGE metrics.  
-- View detailed comparison: original text, reference summary, AI-generated summary.  
-- Supports both **ILC** and **IN-ABS** datasets.
+- Cleaning and normalization of Indian legal texts  
+- Sentence-level **extractive summarization using fine-tuned LegalBERT**  
+- Two-stage **abstractive summarization using QLoRA-enhanced T5**  
+- Chunk-safe summarization for documents exceeding model token limits  
+- Support for **ILC** and **IN-ABS** datasets  
+- Upload and summarize custom legal documents (PDF/DOCX/ODT)  
+- ROUGE-1, ROUGE-2, ROUGE-L evaluation  
+- Session-based execution with real-time progress tracking  
+- Modular, reproducible, and scalable architecture  
+
+---
+
+## System Architecture
+
+1. **Input Selection**
+   - ILC dataset
+   - IN-ABS dataset
+   - User-uploaded legal document
+
+2. **Text Extraction**
+   - `pdfplumber` for digital PDFs  
+   - `pytesseract` OCR fallback for scanned documents  
+
+3. **Preprocessing**
+   - Cleaning, normalization, sentence segmentation  
+
+4. **Extractive Stage**
+   - Fine-tuned **LegalBERT classifier**
+   - Filters and ranks legally relevant sentences  
+
+5. **Abstractive Stage**
+   - **T5-base** with **QLoRA adapters**
+   - Chunk-level summaries followed by global refinement  
+
+6. **Evaluation**
+   - ROUGE score computation  
+
+7. **Frontend Display**
+   - Original text
+   - Reference summary
+   - Generated summary
+   - ROUGE metrics  
 
 ---
 
 ## Installation
 
-1. **Clone the repository**
+### 1️⃣ Clone the Repository
 
 ```bash
 git clone https://github.com/SunilSuthar7/LegalSummarizerV2.git
-cd LegalSummarizer
+cd LegalSummarizerV2
 ````
 
-2. **Create a virtual environment and activate it**
+---
+
+### 2️⃣ Create and Activate Virtual Environment
 
 ```bash
 python -m venv venv
+
 # Windows
 venv\Scripts\activate
-# Linux/Mac
+
+# Linux / macOS
 source venv/bin/activate
 ```
 
-3. **Install dependencies**
+---
+
+### 3️⃣ Install Dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -44,91 +101,113 @@ pip install -r requirements.txt
 
 ## Running the Application
 
-### 1️⃣ Start the Backend
+### 1️⃣ Start the Backend (FastAPI)
 
 ```bash
 python backend/run_server.py
 ```
 
-* FastAPI backend runs at `http://127.0.0.1:8000`.
-* Provides endpoints to run the summarization pipeline and fetch session results.
+* Backend runs at: `http://127.0.0.1:8000`
+* Uses session-based execution for long-running pipelines
+* Exposes REST APIs for:
 
-### 2️⃣ Starting the Frontend
+  * Dataset selection
+  * File upload
+  * Pipeline execution
+  * Progress polling
+  * Result retrieval
 
-Since the frontend is built with plain HTML, CSS, and JavaScript, you can run it in two ways:
+---
 
-### 1. Open Directly in Browser
-- Navigate to the frontend folder.
-- Open `index.html` by double-clicking or right-click → **Open With → Browser**.
+### 2️⃣ Start the Frontend
 
-### 2. Serve via a Simple HTTP Server (Recommended)
-If you face CORS issues or want a proper server environment:
+The frontend is built using **HTML, CSS, and vanilla JavaScript**.
+
+#### Option 1: Open Directly
+
+* Navigate to the `frontend/` folder
+* Open `index.html` in a browser
+
+#### Option 2: Serve via HTTP Server (Recommended)
 
 ```bash
-# Navigate to the frontend folder
 cd frontend
-
-# Start a simple HTTP server on port 5500
 python -m http.server 5500
-````
-
-* Open the following in your browser:
-
 ```
+
+Open in browser:
+
+```text
 http://localhost:5500/index.html
-
 ```
+
 ---
 
-## Using the App
+## Using the Application
 
-1. **Select Dataset**
+1. **Select Input Source**
 
-   * Choose `ILC` or `IN-ABS` from the dropdown.
+   * ILC dataset
+   * IN-ABS dataset
+   * Upload a legal document (PDF/DOCX)
 
-2. **Select Entries**
+2. **Configure Run**
 
-   * Optionally enter a specific entry ID or number of entries to process.
+   * Choose dataset entries or specific IDs
+   * Upload document if applicable
 
-3. **Upload File (Optional)**
+3. **Run Pipeline**
 
-   * Upload a legal document (JSON/text) to summarize.
+   * Click **Run Pipeline**
+   * Monitor real-time progress:
 
-4. **Run Pipeline**
-
-   * Click **Run Pipeline**.
-   * The app shows progress bars for each stage:
-
+     * Text extraction
      * Cleaning
-     * Chunking
-     * Summarization
+     * Extractive summarization
+     * Abstractive summarization
      * Evaluation
 
-5. **View Results**
+4. **View Results**
 
-   * Once complete, view:
-
-     * Original Legal Text
-     * Reference Summary
-     * AI-generated Summary
-     * Global ROUGE scores
+   * Original legal text
+   * Reference summary (for datasets)
+   * AI-generated summary
+   * ROUGE scores
 
 ---
 
-## Notes
+## Evaluation Results (Validation Set)
 
-* Works for both ILC and IN-ABS datasets.
-* Ensure backend server is running before using the frontend.
-* Large datasets may take longer; the app uses a progress bar to indicate status.
+| Model                  | ROUGE-1   | ROUGE-2   | ROUGE-L   |
+| ---------------------- | --------- | --------- | --------- |
+| Base T5                | ~39       | ~18       | ~19       |
+| T5 + QLoRA             | ~42       | ~20       | ~21       |
+| LegalBERT (Extractive) | ~26       | ~10       | ~15       |
+| **Hybrid (Proposed)**  | **47.32** | **22.84** | **23.72** |
 
 ---
 
 ## Technology Stack
 
-* **Backend:** FastAPI, Python, Hugging Face Transformers, PyTorch
+* **Backend:** Python, FastAPI, PyTorch
+* **Models:** LegalBERT, T5-base, QLoRA (PEFT)
 * **Frontend:** HTML, CSS, JavaScript
 * **Datasets:** ILC, IN-ABS
-* **Summarization:** T5-based abstractive model
-* **Evaluation:** ROUGE metrics
+* **Evaluation:** ROUGE
+* **Deployment:** Local machine, Google Colab (free tier)
+
+---
+
+## Notes
+
+* Designed to run on **RTX 3050 (4GB VRAM)** and **free Google Colab**
+* QLoRA enables fine-tuning without full model retraining
+* Modular design allows easy extension to other legal datasets
+* Suitable for academic projects, demos, and research experiments
+
+---
+
+
+
 
 
